@@ -1,0 +1,104 @@
+---
+title: "Indian Liver Patients Capstone Project"
+author: "Adele Taylor"
+date: "08/01/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warnings=FALSE)
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(caret)
+library(data.table)
+
+#download file from https://archive.ics.uci.edu/ml/machine-learning-databases/00225/
+
+URL <- "https://archive.ics.uci.edu/ml/machine-learning-databases/00225/Indian%20Liver%20Patient%20Dataset%20(ILPD).csv"
+download.file(URL, destfile="data.csv")
+raw_data <- read.table("temp.csv", 
+                  header=F, stringsAsFactors=T, sep=",", row.names=NULL)
+colnames(raw_data) <- c("Age", "Gender", "Total Bilirubin", "Direct Bilirubin", "Alkaline Phosphotase", "Alamine Aminotransferase", "Aspartate Aminotransferase", "Total Protien", "Albumin", "Albumin/Globulin Ratio", "Disease")
+raw_data <- raw_data %>% mutate(Disease=(Disease-1))
+
+#remove any rows is NA
+cleaned_data <- na.omit(raw_data)
+
+# Validation set will be 10% of full dataset
+set.seed(18, sample.kind="Rounding") 
+test_index <- createDataPartition(y = cleaned_data$Age, times = 1, p = 0.1, list = FALSE)
+training_set <- cleaned_data[-test_index,]
+validation_set <- cleaned_data[test_index,]
+
+options(digits=4)
+```
+
+## Introduction
+
+The Indian Liver Patients data set (Lichman, M. (2013). UCI Machine Learning Repository [http://archive.ics.uci.edu/ml]. Irvine, CA: University of California, School of Information and Computer Science.) contains 416 liver patient records and 167 non liver patient records collected from North East of Andhra Pradesh, India. Dataset contains age of the patient, gender of the patient, results of blood tests including eight measures of interest and a field used to split the data into two sets (patient with liver disease, or no disease). The aim of this project is simply to create an ensemble model which predicts whether a patient has or does not have liver disease based on the blood test results.
+
+The dataset was divided into training and validation sets, a selection of models trained and tested initially on a random subset of the training set, before best performing models combined into an ensemble and checked against the validation set.
+
+All the code for the analyses mentioned in this report is included in the ataylor_india_liver_patients.R file.
+
+## Analysis
+
+This is a small dataset (`r nrow(cleaned_data)` observations of 11 variables) and we will try and straightforward approach of six simple algorithms from the caret package. First we will check their feasibility,again partitioning the training set into training and test sets in ratio 9:1.
+
+Models chosen were a general linear model ("glm"), k-nearest neighbours ("knn") random forest("rf"), random partition("rpart"), linear discrimination analysis("lda") and quadratic discrimination analysis("qda"). The resulting root mean square errors (RMSEs) are shown in the table below:
+
+```{r analysis}
+models <- c("glm", "knn", "rf", "rpart", "lda", "qda")
+
+RMSE <- function(real, predicted){
+sqrt(mean((real-predicted)^2))
+}
+
+n <- nrow(training_set)
+m <- n/10
+
+set.seed(4, sample.kind="Rounding")
+test_models <- sapply(models,function(model){
+  test_subset <- training_set[sample(n,m),]
+  train_subset <- anti_join(training_set, test_subset)
+  fit <- train(Disease ~ ., model=model, data=train_subset)
+  return(RMSE(predict(fit, test_subset),test_subset$Disease))
+})
+
+test_models %>% kable() %>% kable_styling()
+```
+
+These are all pretty good low RMSEs, so we shall incorporate all models into the final ensemble, as shown in the R code below.
+
+```{r final_model, echo=TRUE}
+
+final_model <- function(validation_set, training_set){
+  predictions <- sapply(models, function(model){
+      fit <- train(Disease ~ ., model=model, data=training_set)
+      return((predict(fit, validation_set)))
+  })    
+}
+```
+
+
+## Results
+
+```{r results, echo=F, message=F, warnings=F}
+
+final_predictions <- final_model(validation_set, training_set)
+
+final_rmse <- RMSE(final_predictions, validation_set$Disease)
+
+```
+
+Using this final model on the validation set gave a final RMSE of `r final_rmse`. 
+
+## Conclusion
+
+Due to time constraints, this was a pretty bare bones approach. A more nuanced approach would look at specific sets of the inputs to see if still reasonable results can be obtained without using the full blood panel (so if only some results are known). It would also be worth testing whether there are differences between the effictiveness of the algorithm based on the gender of the patient as there are `r sum(raw_data$Gender=="Male")` men and only `r sum(raw_data$Gender=="Female")` women included in the dataset. 
